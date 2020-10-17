@@ -774,8 +774,10 @@ module IRB
       end
       if multiline_p && @context.newline_before_multiline_output?
         printf @context.return_format, "\n#{str}"
+        send @context.return_format, "\n#{str}"
       else
         printf @context.return_format, str
+        send @context.return_format, str
       end
     end
 
