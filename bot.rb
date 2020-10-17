@@ -13,7 +13,7 @@ hash = {}
 bot.message() do |event|
   if hash.include? user
     hash[user].input event.content
-    event.respond hash[user].str
+    event.respond hash[user].result_str
   end
 end
 
