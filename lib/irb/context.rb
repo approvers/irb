@@ -22,10 +22,10 @@ module IRB
     #
     # The optional +input_method+ argument:
     #
-    # +nil+::     uses stdin or Reidline or Readline
+    # +nil+::     uses stdin or Readline
     # +String+::  uses a File
     # +other+::   uses this as InputMethod
-    def initialize(irb, workspace = nil, input_method = nil)
+    def initialize(irb, workspace = nil, input_method = nil, output_method = nil)
       @irb = irb
       if workspace
         @workspace = workspace
@@ -39,21 +39,7 @@ module IRB
       @rc = IRB.conf[:RC]
       @load_modules = IRB.conf[:LOAD_MODULES]
 
-      if IRB.conf.has_key?(:USE_SINGLELINE)
-        @use_singleline = IRB.conf[:USE_SINGLELINE]
-      elsif IRB.conf.has_key?(:USE_READLINE) # backward compatibility
-        @use_singleline = IRB.conf[:USE_READLINE]
-      else
-        @use_singleline = nil
-      end
-      if IRB.conf.has_key?(:USE_MULTILINE)
-        @use_multiline = IRB.conf[:USE_MULTILINE]
-      elsif IRB.conf.has_key?(:USE_REIDLINE) # backward compatibility
-        @use_multiline = IRB.conf[:USE_REIDLINE]
-      else
-        @use_multiline = nil
-      end
-      @use_colorize = IRB.conf[:USE_COLORIZE]
+      @use_readline = IRB.conf[:USE_READLINE]
       @verbose = IRB.conf[:VERBOSE]
       @io = nil
 
@@ -78,42 +64,23 @@ module IRB
 
       case input_method
       when nil
-        @io = nil
-        case use_multiline?
+        case use_readline?
         when nil
-          if STDIN.tty? && IRB.conf[:PROMPT_MODE] != :INF_RUBY && !use_singleline?
-            # Both of multiline mode and singleline mode aren't specified.
-            @io = ReidlineInputMethod.new
+          if (defined?(ReadlineInputMethod) && STDIN.tty? &&
+              IRB.conf[:PROMPT_MODE] != :INF_RUBY)
+            @io = ReadlineInputMethod.new
           else
-            @io = nil
+            @io = StdioInputMethod.new
           end
         when false
-          @io = nil
+          @io = StdioInputMethod.new
         when true
-          @io = ReidlineInputMethod.new
-        end
-        unless @io
-          case use_singleline?
-          when nil
-            if (defined?(ReadlineInputMethod) && STDIN.tty? &&
-                IRB.conf[:PROMPT_MODE] != :INF_RUBY)
-              @io = ReadlineInputMethod.new
-            else
-              @io = nil
-            end
-          when false
-            @io = nil
-          when true
-            if defined?(ReadlineInputMethod)
-              @io = ReadlineInputMethod.new
-            else
-              @io = nil
-            end
+          if defined?(ReadlineInputMethod)
+            @io = ReadlineInputMethod.new
           else
-            @io = nil
+            @io = StdioInputMethod.new
           end
         end
-        @io = StdioInputMethod.new unless @io
 
       when String
         @io = FileInputMethod.new(input_method)
@@ -124,20 +91,17 @@ module IRB
       end
       self.save_history = IRB.conf[:SAVE_HISTORY] if IRB.conf[:SAVE_HISTORY]
 
+      if output_method
+        @output_method = output_method
+      else
+        @output_method = StdioOutputMethod.new
+      end
+
       @echo = IRB.conf[:ECHO]
       if @echo.nil?
         @echo = true
       end
-
-      @echo_on_assignment = IRB.conf[:ECHO_ON_ASSIGNMENT]
-      if @echo_on_assignment.nil?
-        @echo_on_assignment = :truncate
-      end
-
-      @newline_before_multiline_output = IRB.conf[:NEWLINE_BEFORE_MULTILINE_OUTPUT]
-      if @newline_before_multiline_output.nil?
-        @newline_before_multiline_output = true
-      end
+      self.debug_level = IRB.conf[:DEBUG_LEVEL]
     end
 
     # The top-level workspace, see WorkSpace#main
@@ -153,9 +117,9 @@ module IRB
     attr_reader :thread
     # The current input method
     #
-    # Can be either StdioInputMethod, ReadlineInputMethod,
-    # ReidlineInputMethod, FileInputMethod or other specified when the
-    # context is created. See ::new for more # information on +input_method+.
+    # Can be either StdioInputMethod, ReadlineInputMethod, FileInputMethod or
+    # other specified when the context is created. See ::new for more
+    # information on +input_method+.
     attr_accessor :io
 
     # Current irb session
@@ -173,18 +137,12 @@ module IRB
     # +input_method+ passed to Context.new
     attr_accessor :irb_path
 
-    # Whether multiline editor mode is enabled or not.
+    # Whether +Readline+ is enabled or not.
     #
-    # A copy of the default <code>IRB.conf[:USE_MULTILINE]</code>
-    attr_reader :use_multiline
-    # Whether singleline editor mode is enabled or not.
+    # A copy of the default <code>IRB.conf[:USE_READLINE]</code>
     #
-    # A copy of the default <code>IRB.conf[:USE_SINGLELINE]</code>
-    attr_reader :use_singleline
-    # Whether colorization is enabled or not.
-    #
-    # A copy of the default <code>IRB.conf[:USE_COLORIZE]</code>
-    attr_reader :use_colorize
+    # See #use_readline= for more information.
+    attr_reader :use_readline
     # A copy of the default <code>IRB.conf[:INSPECT_MODE]</code>
     attr_reader :inspect_mode
 
@@ -207,17 +165,17 @@ module IRB
     # Can be either the default <code>IRB.conf[:AUTO_INDENT]</code>, or the
     # mode set by #prompt_mode=
     #
-    # To disable auto-indentation in irb:
+    # To enable auto-indentation in irb:
     #
-    #     IRB.conf[:AUTO_INDENT] = false
-    #
-    # or
-    #
-    #     irb_context.auto_indent_mode = false
+    #     IRB.conf[:AUTO_INDENT] = true
     #
     # or
     #
-    #     IRB.CurrentContext.auto_indent_mode = false
+    #     irb_context.auto_indent_mode = true
+    #
+    # or
+    #
+    #     IRB.CurrentContext.auto_indent_mode = true
     #
     # See IRB@Configuration for more information.
     attr_accessor :auto_indent_mode
@@ -240,7 +198,7 @@ module IRB
     attr_accessor :ignore_eof
     # Whether to echo the return value to output or not.
     #
-    # Uses <code>IRB.conf[:ECHO]</code> if available, or defaults to +true+.
+    # Uses IRB.conf[:ECHO] if available, or defaults to +true+.
     #
     #     puts "hello"
     #     # hello
@@ -249,44 +207,14 @@ module IRB
     #     puts "omg"
     #     # omg
     attr_accessor :echo
-    # Whether to echo for assignment expressions
-    #
-    # If set to +false+, the value of assignment will not be shown.
-    #
-    # If set to +true+, the value of assignment will be shown.
-    #
-    # If set to +:truncate+, the value of assignment will be shown and truncated.
-    #
-    # It defaults to +:truncate+.
-    #
-    #     a = "omg"
-    #     #=> omg
-    #     a = "omg" * 10
-    #     #=> omgomgomgomgomgomgomg...
-    #     IRB.CurrentContext.echo_on_assignment = false
-    #     a = "omg"
-    #     IRB.CurrentContext.echo_on_assignment = true
-    #     a = "omg"
-    #     #=> omgomgomgomgomgomgomgomgomgomg
-    attr_accessor :echo_on_assignment
-    # Whether a newline is put before multiline output.
-    #
-    # Uses <code>IRB.conf[:NEWLINE_BEFORE_MULTILINE_OUTPUT]</code> if available,
-    # or defaults to +true+.
-    #
-    #     "abc\ndef"
-    #     #=>
-    #     abc
-    #     def
-    #     IRB.CurrentContext.newline_before_multiline_output = false
-    #     "abc\ndef"
-    #     #=> abc
-    #     def
-    attr_accessor :newline_before_multiline_output
     # Whether verbose messages are displayed or not.
     #
     # A copy of the default <code>IRB.conf[:VERBOSE]</code>
     attr_accessor :verbose
+    # The debug level of irb
+    #
+    # See #debug_level= for more information.
+    attr_reader :debug_level
 
     # The limit of backtrace lines displayed as top +n+ and tail +n+.
     #
@@ -297,34 +225,18 @@ module IRB
     # See IRB@Command+line+options for more command line options.
     attr_accessor :back_trace_limit
 
-    # Alias for #use_multiline
-    alias use_multiline? use_multiline
-    # Alias for #use_singleline
-    alias use_singleline? use_singleline
-    # backward compatibility
-    alias use_reidline use_multiline
-    # backward compatibility
-    alias use_reidline? use_multiline
-    # backward compatibility
-    alias use_readline use_singleline
-    # backward compatibility
-    alias use_readline? use_singleline
-    # Alias for #use_colorize
-    alias use_colorize? use_colorize
+    # Alias for #use_readline
+    alias use_readline? use_readline
     # Alias for #rc
     alias rc? rc
     alias ignore_sigint? ignore_sigint
     alias ignore_eof? ignore_eof
     alias echo? echo
-    alias echo_on_assignment? echo_on_assignment
-    alias newline_before_multiline_output? newline_before_multiline_output
 
     # Returns whether messages are displayed or not.
     def verbose?
       if @verbose.nil?
-        if @io.kind_of?(ReidlineInputMethod)
-          false
-        elsif defined?(ReadlineInputMethod) && @io.kind_of?(ReadlineInputMethod)
+        if defined?(ReadlineInputMethod) && @io.kind_of?(ReadlineInputMethod)
           false
         elsif !STDIN.tty? or @io.kind_of?(FileInputMethod)
           true
@@ -337,11 +249,9 @@ module IRB
     end
 
     # Whether #verbose? is +true+, and +input_method+ is either
-    # StdioInputMethod or ReidlineInputMethod or ReadlineInputMethod, see #io
-    # for more information.
+    # StdioInputMethod or ReadlineInputMethod, see #io for more information.
     def prompting?
       verbose? || (STDIN.tty? && @io.kind_of?(StdioInputMethod) ||
-                   @io.kind_of?(ReidlineInputMethod) ||
                    (defined?(ReadlineInputMethod) && @io.kind_of?(ReadlineInputMethod)))
     end
 
@@ -440,11 +350,36 @@ module IRB
       @inspect_mode
     end
 
+    # Obsolete method.
+    #
+    # Can be set using the +--noreadline+ and +--readline+ command line
+    # options.
+    #
+    # See IRB@Command+line+options for more command line options.
+    def use_readline=(opt)
+      print "This method is obsolete."
+      print "Do nothing."
+    end
+
+    # Sets the debug level of irb
+    #
+    # Can also be set using the +--irb_debug+ command line option.
+    #
+    # See IRB@Command+line+options for more command line options.
+    def debug_level=(value)
+      @debug_level = value
+      RubyLex.debug_level = value
+    end
+
+    # Whether or not debug mode is enabled, see #debug_level=.
+    def debug?
+      @debug_level > 0
+    end
+
     def evaluate(line, line_no, exception: nil) # :nodoc:
       @line_no = line_no
       if exception
-        line_no -= 1
-        line = "begin ::Kernel.raise _; rescue _.class\n#{line}\n""end"
+        line = "begin ::Kernel.raise _; rescue _.class; #{line}; end"
         @workspace.local_variable_set(:_, exception)
       end
       set_last_value(@workspace.evaluate(self, line, irb_path, line_no))

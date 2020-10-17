@@ -9,20 +9,7 @@
 #
 #
 #
-begin
-  require "tracer"
-rescue LoadError
-  $stderr.puts "Tracer extension of IRB is enabled but tracer gem doesn't found."
-  module IRB
-    TracerLoadError = true
-    class Context
-      def use_tracer=(opt)
-        # do nothing
-      end
-    end
-  end
-  return # This is about to disable loading below
-end
+require "tracer"
 
 module IRB
 
@@ -82,3 +69,4 @@ module IRB
 
   IRB.initialize_tracer
 end
+
