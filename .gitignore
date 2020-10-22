@@ -1,12 +1,2 @@
-/.bundle/
-/.yardoc
-/_yardoc/
-/coverage/
-/doc/
-/pkg/
-/spec/reports/
-/tmp/
-Gemfile.lock
-
+irb_v1.1.1
 .env
-bot-old/
